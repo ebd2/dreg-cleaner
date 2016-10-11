@@ -1,10 +1,9 @@
 from setuptools import setup, find_packages
 
 requirements = [
-    'requests ==2.7.0'
-]
-
-setup_requirements = [
+    'iso8601',
+    'pytz',
+    'requests ==2.7.0',
     'flake8'
 ]
 
@@ -23,6 +22,5 @@ setup(
     packages=find_packages(),
     package_dir={'docker_reg_api_v2': 'docker_reg_api_v2'},
     install_requires=requirements,
-    setup_requires=setup_requirements,
     entry_points={'console_scripts': ['docker-reg = docker_reg_api_v2.main:main']}
 )
