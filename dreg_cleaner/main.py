@@ -12,14 +12,17 @@ from pprint import pprint
 from argparse import ArgumentParser
 import sys
 
+DEFAULT_HOST = 'registry-1.docker.io'
+DEFAULT_RETENTION_DAYS = 30
+
 SCHEME = 'https'
-HOST = 'registry-1.docker.io'
+HOST = DEFAULT_HOST
 
 BEARER_REALM_ALIASES = {
         'registry.docker.io': ['registry-1.docker.io']
 }
 
-def get_endpoint(reponame, action, scheme=SCHEME, host=HOST, **action_params):
+def get_endpoint(reponame, action, scheme=SCHEME, **action_params):
     path = '/v2'
     if reponame:
         path = '/'.join([path, reponame])
@@ -27,7 +30,7 @@ def get_endpoint(reponame, action, scheme=SCHEME, host=HOST, **action_params):
         action = action.format(**action_params)
         path = '/'.join([path, action])
 
-    return urlunsplit((scheme, host, path, None, None))
+    return urlunsplit((scheme, HOST, path, None, None))
 
 
 def get_auth(service, docker_cfg=os.path.join(os.getenv("HOME"), '.docker', 'config.json')):
@@ -194,12 +197,16 @@ def cleanup(reponame, metadata, args):
 def main():
     parser = ArgumentParser("Clean up old images from a docker registry")
     parser.add_argument('--dry-run', action='store_true', default=False)
-    parser.add_argument('--days', type=int, default=30)
+    parser.add_argument('--host', type=str, default=DEFAULT_HOST)
+    parser.add_argument('--days', type=int, default=DEFAULT_RETENTION_DAYS)
     metadata_group = parser.add_mutually_exclusive_group()
     metadata_group.add_argument('--metadata', type=str, default=None)
     metadata_group.add_argument('--dump-metadata', type=str, default=None)
     parser.add_argument('reponames', type=str, help="Repository names to clean up", nargs='*')
     args = parser.parse_args()
+
+    global HOST
+    HOST = args.host
 
     if args.metadata:
         with open(args.metadata, 'r') as metafile:
