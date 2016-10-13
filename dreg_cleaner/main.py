@@ -14,8 +14,10 @@ import sys
 
 SCHEME = 'https'
 HOST = 'registry-1.docker.io'
-randoms_warn_only = True
 
+BEARER_REALM_ALIASES = {
+        'registry.docker.io': ['registry-1.docker.io']
+}
 
 def get_endpoint(reponame, action, scheme=SCHEME, host=HOST, **action_params):
     path = '/v2'
@@ -29,9 +31,17 @@ def get_endpoint(reponame, action, scheme=SCHEME, host=HOST, **action_params):
 
 
 def get_auth(service, docker_cfg=os.path.join(os.getenv("HOME"), '.docker', 'config.json')):
+    services = list(service)
+    services.extend(BEARER_REALM_ALIASES.get(service, []))
+
     with open(docker_cfg) as fp:
         config = json.load(fp)
-        return config['auths'][service]['auth']
+        for service_candidate in services:
+            try:
+                return config['auths'][service_candidate]['auth']
+            except KeyError:
+                pass
+        raise Exception("No auth token for service {service}. Try `docker login {service}'".format(service=service))
 
 
 def get_bearer(response):
