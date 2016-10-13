@@ -17,12 +17,18 @@ DEFAULT_RETENTION_DAYS = 30
 
 SCHEME = 'https'
 HOST = DEFAULT_HOST
+# Tags we should never delete
+EXEMPT_TAGS = frozenset(['latest'])
 
 BEARER_REALM_ALIASES = {
         'registry.docker.io': ['registry-1.docker.io']
 }
 
+
 def get_endpoint(reponame, action, scheme=SCHEME, **action_params):
+    """
+    Get the full URL of an API endpoint.
+    """
     path = '/v2'
     if reponame:
         path = '/'.join([path, reponame])
@@ -34,6 +40,10 @@ def get_endpoint(reponame, action, scheme=SCHEME, **action_params):
 
 
 def get_auth(service, docker_cfg=os.path.join(os.getenv("HOME"), '.docker', 'config.json')):
+    """
+    Find an auth token in docker config matching the service specified by the
+    registry API.
+    """
     services = list(service)
     services.extend(BEARER_REALM_ALIASES.get(service, []))
 
@@ -48,6 +58,9 @@ def get_auth(service, docker_cfg=os.path.join(os.getenv("HOME"), '.docker', 'con
 
 
 def get_bearer(response):
+    """
+    Get a bearer token for the registry.
+    """
     www_authenticate = response['www-authenticate']
     kv_list = urllib2.parse_http_list(www_authenticate)
     kvs = urllib2.parse_keqv_list(kv_list)
@@ -70,6 +83,10 @@ def reg_request(
         extra_headers=None,
         verb=requests.get,
         raise_for_status=True):
+    """
+    Make a request to the registry API, using bearer authentication if
+    required.
+    """
     response = verb(endpoint)
 
     if response.status_code == 200:
@@ -77,7 +94,6 @@ def reg_request(
 
     if response.status_code == 401:
         bearer = get_bearer(response.headers)
-
         headers = {'Authorization': 'Bearer %s' % (bearer,)}
 
         if extra_headers:
@@ -91,6 +107,11 @@ def reg_request(
 
 
 def get_metadata(reponame, tag):
+    """
+    Get the metadata for a tag, consisting of the tag's:
+    1. build time
+    2. docker-content-digest, to be used for deletion
+    """
     manifest = reg_request(
             get_endpoint(reponame, 'manifests/{tag}', tag=tag),
             extra_headers={
@@ -105,27 +126,15 @@ def get_metadata(reponame, tag):
     return parse_date(created), delete_identifier
 
 
-git_tag_re = re.compile('^[0-9A-Fa-f]{7}$')
-release_tag_re = re.compile('^[0-9]{1,6}$')
-
-
-def is_git_tag(tag):
-    return git_tag_re.match(tag)
-
-
-def is_release(tag):
-    return release_tag_re.match(tag)
-
-
 def im_too_young_to_die(now, then, max_age):
     age = now - then
     return age < max_age
 
 
-EXEMPT_TAGS = frozenset(['latest'])
-
-
 def get_live_tags(reponame):
+    """
+    Get the tags in the registry for the repository.
+    """
     tags_response = reg_request(get_endpoint(reponame, 'tags/list'))
     tags = set(tags_response.json()['tags'])
     if not tags:
@@ -133,7 +142,31 @@ def get_live_tags(reponame):
     return tags
 
 
+"""
+Workflow specific.
+We push snapshot releases to dockerhub that have a tag of the short git hash of
+the repo we build from.
+We push actual releases to dockerhub with an integer release number.
+"""
+
+
+def is_git_tag(tag):
+    git_tag_re = re.compile('^[0-9A-Fa-f]{7}$')
+    return git_tag_re.match(tag)
+
+
+def is_release(tag):
+    release_tag_re = re.compile('^[0-9]{1,6}$')
+    return release_tag_re.match(tag)
+
+
 def classify_tags(tags):
+    """
+    Classify tags into 3 categories:
+    - git tags, typically snapshots, that we want to clean up eventually
+    - releases, which we want to keep permanently
+    - other, like 'latest', or things we pushed by accident.
+    """
     git_tags = frozenset([tag for tag in tags if is_git_tag(tag)])
     releases = frozenset([tag for tag in tags if is_release(tag)])
     others = tags.difference(git_tags, releases)
@@ -148,6 +181,9 @@ def classify_tags(tags):
 
 
 def get_live_metadata(reponame, tags):
+    """
+    Get the metadata for all of the tags
+    """
     metadata = {}
     for tag in tags:
         print 'Fetching metadata for {}'.format(tag)
@@ -156,6 +192,10 @@ def get_live_metadata(reponame, tags):
 
 
 def find_cleanup(metadata, candidates, exempt, max_age):
+    """
+    Decide what tags to delete based on age or membership in the set of exempt
+    tags.
+    """
     now = datetime.datetime.now(utc)
     cleanup_list = []
 
@@ -172,6 +212,9 @@ def find_cleanup(metadata, candidates, exempt, max_age):
 
 
 def cleanup(reponame, metadata, args):
+    """
+    Find tags to clean up, then delete them.
+    """
     git_tags, releases, others = classify_tags(frozenset(metadata.keys()))
 
     max_age = datetime.timedelta(args.days)
